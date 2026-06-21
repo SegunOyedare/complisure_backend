@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 import models
@@ -16,11 +17,30 @@ from datetime import datetime, timedelta
 app = FastAPI()
 
 # =========================
-# ROOT TEST (DEPLOY CHECK)
+# CORS (IMPORTANT FOR FRONTEND)
+# =========================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://*.vercel.app",
+        "https://complisure-frontend.vercel.app"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# =========================
+# HEALTH CHECK ROUTE
 # =========================
 @app.get("/")
-def root():
-    return {"message": "Complisure API is running 🚀"}
+def home():
+    return {
+        "message": "Complisure Backend is running 🚀",
+        "status": "active"
+    }
 
 # =========================
 # CREATE TABLES (SQLite)
@@ -63,7 +83,7 @@ def create_token(data: dict):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 # =========================
-# GET CURRENT USER
+# GET CURRENT USER (JWT CHECK)
 # =========================
 def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
@@ -81,7 +101,6 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 # =========================================================
 # 👤 USERS
 # =========================================================
-
 @app.post("/users", response_model=schemas.UserOut)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
@@ -105,7 +124,6 @@ def get_users(db: Session = Depends(get_db)):
 # =========================================================
 # 🔐 LOGIN
 # =========================================================
-
 @app.post("/login")
 def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
 
@@ -134,7 +152,6 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
 # =========================================================
 # 📦 EQUIPMENT (PROTECTED)
 # =========================================================
-
 @app.post("/equipment", response_model=schemas.EquipmentOut)
 def create_equipment(
     equipment: schemas.EquipmentCreate,
@@ -201,9 +218,8 @@ def delete_equipment(
     return {"message": "Equipment deleted successfully"}
 
 # =========================================================
-# 📊 DASHBOARD STATS (PROTECTED)
+# 📊 DASHBOARD
 # =========================================================
-
 @app.get("/dashboard/stats")
 def dashboard_stats(
     db: Session = Depends(get_db),
@@ -227,10 +243,9 @@ def dashboard_stats(
         "inactive": total - active
     }
 
-# =========================================================
-# RUN SERVER (LOCAL ONLY)
-# =========================================================
-
+# =========================
+# RUN LOCALLY ONLY
+# =========================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
