@@ -1,24 +1,26 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
+
 
 # =========================
 # USER SCHEMAS
 # =========================
 
 class UserCreate(BaseModel):
-    name: str
-    role: str = "user"
+    email: str
     password: str
+    role: str = "user"
 
 
 class UserLogin(BaseModel):
-    name: str
+    email: str
     password: str
 
 
 class UserOut(BaseModel):
     id: int
-    name: str
+    email: str
     role: str
 
     class Config:
@@ -42,7 +44,7 @@ class EquipmentOut(BaseModel):
     serial_number: str
     location: str
     status: str
-    owner_id: int
+    owner_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -78,7 +80,7 @@ class MaintenanceOut(BaseModel):
 
 
 # =========================
-# CALIBRATION STATUS
+# CALIBRATION SCHEMAS
 # =========================
 
 class CalibrationStatusOut(BaseModel):

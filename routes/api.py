@@ -6,25 +6,30 @@ from models import User, Equipment, Maintenance, Alert
 from schemas import (
     UserCreate,
     UserLogin,
-    UserOut,
     EquipmentCreate,
-    EquipmentOut,
     EquipmentStatusUpdate,
     MaintenanceCreate,
+    EquipmentOut,
     MaintenanceOut,
-    CalibrationStatusOut,
-    DashboardOut,
-    AlertOut,
-)
-from auth import (
-    hash_password,
-    verify_password,
-    create_access_token,
-    get_current_user,
-    admin_only,
+    AlertOut
 )
 
+from passlib.context import CryptContext
+
 router = APIRouter()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# =========================
+# PASSWORD HELPERS
+# =========================
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str):
+    return pwd_context.verify(plain_password, hashed_password)
 
 
 # =========================
@@ -32,25 +37,29 @@ router = APIRouter()
 # =========================
 @router.post("/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.name == user.name).first()
 
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="User already exists"
-        )
+    existing_user = db.query(User).filter(User.email == user.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="User already exists")
 
     new_user = User(
-        name=user.name,
-        role=user.role,
+        email=user.email,
         password=hash_password(user.password),
+        role=user.role
     )
 
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    return {"message": "User created successfully"}
+    return {
+        "message": "User created successfully",
+        "user": {
+            "id": new_user.id,
+            "email": new_user.email,
+            "role": new_user.role
+        }
+    }
 
 
 # =========================
@@ -58,87 +67,38 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
 # =========================
 @router.post("/login")
 def login(user: UserLogin, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(
-        User.name == user.name
-    ).first()
+
+    db_user = db.query(User).filter(User.email == user.email).first()
 
     if not db_user:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid credentials"
-        )
+        raise HTTPException(status_code=404, detail="User not found")
 
-    if not verify_password(
-        user.password,
-        db_user.password
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid credentials"
-        )
-
-    token = create_access_token(
-        {
-            "user_id": db_user.id,
-            "role": db_user.role,
-        }
-    )
+    if not verify_password(user.password, db_user.password):
+        raise HTTPException(status_code=401, detail="Invalid password")
 
     return {
-        "access_token": token,
-        "token_type": "bearer",
+        "message": "Login successful 🚀",
+        "user": {
+            "id": db_user.id,
+            "email": db_user.email,
+            "role": db_user.role
+        }
     }
 
 
 # =========================
-# USERS (ADMIN ONLY)
+# EQUIPMENT
 # =========================
-@router.get("/users", response_model=list[UserOut])
-def get_users(
-    db: Session = Depends(get_db),
-    user=Depends(admin_only),
-):
-    return db.query(User).all()
+
+@router.get("/equipment", response_model=list[EquipmentOut])
+def get_equipment(db: Session = Depends(get_db)):
+    return db.query(Equipment).all()
 
 
-# =========================
-# MY PROFILE
-# =========================
-@router.get("/me", response_model=UserOut)
-def get_my_profile(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    db_user = db.query(User).filter(
-        User.id == user["user_id"]
-    ).first()
-
-    if not db_user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-
-    return db_user
-
-
-# =========================
-# CREATE EQUIPMENT
-# =========================
 @router.post("/equipment", response_model=EquipmentOut)
-def create_equipment(
-    data: EquipmentCreate,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    equipment = Equipment(
-        name=data.name,
-        serial_number=data.serial_number,
-        location=data.location,
-        status=data.status,
-        owner_id=user["user_id"],
-    )
+def create_equipment(data: EquipmentCreate, db: Session = Depends(get_db)):
 
+    equipment = Equipment(**data.dict())
     db.add(equipment)
     db.commit()
     db.refresh(equipment)
@@ -146,210 +106,106 @@ def create_equipment(
     return equipment
 
 
-# =========================
-# GET EQUIPMENT
-# =========================
-@router.get("/equipment", response_model=list[EquipmentOut])
-def get_equipment(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    return db.query(Equipment).all()
-
-
-# =========================
-# UPDATE EQUIPMENT STATUS
-# =========================
 @router.patch("/equipment/{equipment_id}/status")
 def update_equipment_status(
     equipment_id: int,
     data: EquipmentStatusUpdate,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    equipment = db.query(Equipment).filter(
-        Equipment.id == equipment_id
-    ).first()
+
+    equipment = db.query(Equipment).filter(Equipment.id == equipment_id).first()
 
     if not equipment:
-        raise HTTPException(
-            status_code=404,
-            detail="Equipment not found"
-        )
+        raise HTTPException(status_code=404, detail="Equipment not found")
 
     equipment.status = data.status
-
     db.commit()
-    db.refresh(equipment)
 
-    return equipment
-
-
-# =========================
-# CREATE MAINTENANCE
-# =========================
-@router.post("/maintenance", response_model=MaintenanceOut)
-def create_maintenance(
-    data: MaintenanceCreate,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    equipment = db.query(Equipment).filter(
-        Equipment.id == data.equipment_id
-    ).first()
-
-    if not equipment:
-        raise HTTPException(
-            status_code=404,
-            detail="Equipment not found"
-        )
-
-    record = Maintenance(
-        equipment_id=data.equipment_id,
-        issue=data.issue,
-        action_taken=data.action_taken,
-        performed_by=data.performed_by,
-        status=data.status,
-    )
-
-    db.add(record)
-
-    issue_text = data.issue.lower()
-
-    if "repair" in issue_text:
-        equipment.status = "under_repair"
-
-    if "calibration" in issue_text:
-        equipment.status = "calibration_due"
-
-    if data.status == "completed":
-        equipment.status = "active"
-
-    db.commit()
-    db.refresh(record)
-
-    return record
+    return {"message": "Equipment status updated"}
 
 
 # =========================
-# GET MAINTENANCE
+# MAINTENANCE
 # =========================
+
 @router.get("/maintenance", response_model=list[MaintenanceOut])
-def get_maintenance(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
+def get_maintenance(db: Session = Depends(get_db)):
     return db.query(Maintenance).all()
+
+
+@router.post("/maintenance", response_model=MaintenanceOut)
+def create_maintenance(data: MaintenanceCreate, db: Session = Depends(get_db)):
+
+    maintenance = Maintenance(**data.dict())
+    db.add(maintenance)
+    db.commit()
+    db.refresh(maintenance)
+
+    return maintenance
+
+
+# =========================
+# ALERTS
+# =========================
+
+@router.get("/alerts", response_model=list[AlertOut])
+def get_alerts(db: Session = Depends(get_db)):
+    return db.query(Alert).all()
+
+
+@router.post("/alerts/generate")
+def generate_alerts(db: Session = Depends(get_db)):
+
+    faulty = db.query(Equipment).filter(Equipment.status != "active").all()
+
+    return {
+        "message": "Alerts generated",
+        "count": len(faulty)
+    }
 
 
 # =========================
 # CALIBRATION STATUS
 # =========================
-@router.get(
-    "/equipment/calibration-status",
-    response_model=list[CalibrationStatusOut]
-)
-def get_calibration_status(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    equipment_list = db.query(Equipment).all()
 
-    result = []
+@router.get("/equipment/calibration-status")
+def calibration_status(db: Session = Depends(get_db)):
 
-    for eq in equipment_list:
-        result.append(
-            {
-                "id": eq.id,
-                "name": eq.name,
-                "serial_number": eq.serial_number,
-                "location": eq.location,
-                "calibration_status": eq.get_calibration_status(),
-            }
-        )
+    equipment = db.query(Equipment).all()
 
-    return result
-
-
-# =========================
-# GET ALERTS
-# =========================
-@router.get("/alerts", response_model=list[AlertOut])
-def get_alerts(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    return db.query(Alert).all()
-
-
-# =========================
-# GENERATE ALERTS
-# =========================
-@router.post("/alerts/generate")
-def generate_alerts(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    equipment_list = db.query(Equipment).all()
-
-    created = 0
-
-    for eq in equipment_list:
-
-        if eq.status == "calibration_due":
-            alert = Alert(
-                equipment_id=eq.id,
-                message=f"{eq.name} requires calibration",
-                alert_type="calibration",
-            )
-
-            db.add(alert)
-            created += 1
-
-        if eq.status == "under_repair":
-            alert = Alert(
-                equipment_id=eq.id,
-                message=f"{eq.name} is under repair",
-                alert_type="maintenance",
-            )
-
-            db.add(alert)
-            created += 1
-
-    db.commit()
-
-    return {
-        "message": "Alerts generated successfully",
-        "total_alerts": created,
-    }
+    return [
+        {
+            "id": e.id,
+            "name": e.name,
+            "serial_number": e.serial_number,
+            "location": e.location,
+            "calibration_status": "due" if e.status != "active" else "ok"
+        }
+        for e in equipment
+    ]
 
 
 # =========================
 # DASHBOARD
 # =========================
-@router.get("/dashboard", response_model=DashboardOut)
-def get_dashboard(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    equipment = db.query(Equipment).all()
-    maintenance = db.query(Maintenance).all()
-    alerts = db.query(Alert).all()
+
+@router.get("/dashboard")
+def dashboard(db: Session = Depends(get_db)):
 
     return {
-        "total_equipment": len(equipment),
-        "active": len(
-            [e for e in equipment if e.status == "active"]
-        ),
-        "under_repair": len(
-            [e for e in equipment if e.status == "under_repair"]
-        ),
-        "calibration_due": len(
-            [e for e in equipment if e.status == "calibration_due"]
-        ),
-        "decommissioned": len(
-            [e for e in equipment if e.status == "decommissioned"]
-        ),
-        "total_maintenance": len(maintenance),
-        "total_alerts": len(alerts),
+        "total_equipment": db.query(Equipment).count(),
+        "active": db.query(Equipment).filter(Equipment.status == "active").count(),
+        "under_repair": db.query(Equipment).filter(Equipment.status == "repair").count(),
+        "calibration_due": db.query(Equipment).filter(Equipment.status != "active").count(),
+        "decommissioned": 0,
+        "total_maintenance": db.query(Maintenance).count(),
+        "total_alerts": db.query(Alert).count()
     }
+
+
+# =========================
+# HOME
+# =========================
+@router.get("/")
+def home():
+    return {"message": "Complisure API is running 🚀"}
