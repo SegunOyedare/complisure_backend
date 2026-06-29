@@ -6,7 +6,6 @@ from typing import Optional
 # =========================
 # USER SCHEMAS
 # =========================
-
 class UserCreate(BaseModel):
     email: str
     password: str
@@ -30,7 +29,6 @@ class UserOut(BaseModel):
 # =========================
 # EQUIPMENT SCHEMAS
 # =========================
-
 class EquipmentCreate(BaseModel):
     name: str
     serial_number: str
@@ -57,7 +55,6 @@ class EquipmentStatusUpdate(BaseModel):
 # =========================
 # MAINTENANCE SCHEMAS
 # =========================
-
 class MaintenanceCreate(BaseModel):
     equipment_id: int
     issue: str
@@ -80,24 +77,8 @@ class MaintenanceOut(BaseModel):
 
 
 # =========================
-# CALIBRATION SCHEMAS
-# =========================
-
-class CalibrationStatusOut(BaseModel):
-    id: int
-    name: str
-    serial_number: str
-    location: str
-    calibration_status: str
-
-    class Config:
-        from_attributes = True
-
-
-# =========================
 # ALERT SCHEMAS
 # =========================
-
 class AlertOut(BaseModel):
     id: int
     equipment_id: int
@@ -111,9 +92,8 @@ class AlertOut(BaseModel):
 
 
 # =========================
-# DASHBOARD SCHEMAS
+# DASHBOARD SCHEMA
 # =========================
-
 class DashboardOut(BaseModel):
     total_equipment: int
     active: int

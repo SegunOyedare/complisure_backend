@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -9,6 +9,10 @@ from datetime import datetime, timedelta
 import models
 import schemas
 from database import SessionLocal, engine, Base
+
+# =========================
+# APP INIT
+# =========================
 
 app = FastAPI()
 
@@ -29,10 +33,11 @@ app.add_middleware(
 )
 
 # =========================
-# DATABASE
+# DATABASE INIT
 # =========================
 
 Base.metadata.create_all(bind=engine)
+
 
 def get_db():
     db = SessionLocal()
@@ -40,6 +45,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 # =========================
 # HOME
@@ -52,20 +58,19 @@ def home():
         "status": "active"
     }
 
+
 # =========================
-# AUTH
+# AUTH SETUP
 # =========================
 
 SECRET_KEY = "supersecretkey123"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto"
-)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
+# ✅ FIXED AUTH METHOD (NO MORE OAUTH SCOPES UI)
+oauth2_scheme = HTTPBearer()
 
 
 def hash_password(password: str):
@@ -81,26 +86,23 @@ def create_token(data: dict):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
 
-    return jwt.encode(
-        to_encode,
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+# =========================
+# AUTH USER GETTER (FIXED)
+# =========================
+
+def get_current_user(credentials=Depends(oauth2_scheme)):
+    token = credentials.credentials
+
     try:
-        payload = jwt.decode(
-            token,
-            SECRET_KEY,
-            algorithms=[ALGORITHM]
-        )
-
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
 
         if email is None:
             raise HTTPException(
-                status_code=401,
+                status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token"
             )
 
@@ -108,29 +110,24 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
     except JWTError:
         raise HTTPException(
-            status_code=401,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token"
         )
+
 
 # =========================
 # USERS
 # =========================
 
 @app.post("/users", response_model=schemas.UserOut)
-def create_user(
-    user: schemas.UserCreate,
-    db: Session = Depends(get_db)
-):
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
     existing = db.query(models.User).filter(
         models.User.email == user.email
     ).first()
 
     if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="Email already exists"
-        )
+        raise HTTPException(status_code=400, detail="Email already exists")
 
     db_user = models.User(
         email=user.email,
@@ -154,38 +151,22 @@ def get_users(db: Session = Depends(get_db)):
 def get_me(user: str = Depends(get_current_user)):
     return {"email": user}
 
+
 # =========================
 # LOGIN
 # =========================
 
 @app.post("/login")
-def login(
-    user: schemas.UserLogin,
-    db: Session = Depends(get_db)
-):
+def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
 
     db_user = db.query(models.User).filter(
         models.User.email == user.email
     ).first()
 
-    if not db_user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials"
-        )
+    if not db_user or not verify_password(user.password, db_user.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not verify_password(
-        user.password,
-        db_user.password
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials"
-        )
-
-    token = create_token(
-        {"sub": db_user.email}
-    )
+    token = create_token({"sub": db_user.email})
 
     return {
         "access_token": token,
@@ -196,6 +177,7 @@ def login(
             "role": db_user.role
         }
     }
+
 
 # =========================
 # EQUIPMENT
@@ -222,7 +204,6 @@ def get_equipment(
     db: Session = Depends(get_db),
     user: str = Depends(get_current_user)
 ):
-
     return db.query(models.Equipment).all()
 
 
@@ -238,10 +219,7 @@ def get_one(
     ).first()
 
     if not item:
-        raise HTTPException(
-            status_code=404,
-            detail="Equipment not found"
-        )
+        raise HTTPException(status_code=404, detail="Equipment not found")
 
     return item
 
@@ -249,7 +227,7 @@ def get_one(
 @app.put("/equipment/{equipment_id}")
 def update_equipment(
     equipment_id: int,
-    equipment: schemas.EquipmentCreate,
+    equipment: schemas.EquipmentStatusUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(get_current_user)
 ):
@@ -259,13 +237,9 @@ def update_equipment(
     ).first()
 
     if not item:
-        raise HTTPException(
-            status_code=404,
-            detail="Equipment not found"
-        )
+        raise HTTPException(status_code=404, detail="Equipment not found")
 
-    for key, value in equipment.dict().items():
-        setattr(item, key, value)
+    item.status = equipment.status
 
     db.commit()
     db.refresh(item)
@@ -285,17 +259,13 @@ def delete_equipment(
     ).first()
 
     if not item:
-        raise HTTPException(
-            status_code=404,
-            detail="Equipment not found"
-        )
+        raise HTTPException(status_code=404, detail="Equipment not found")
 
     db.delete(item)
     db.commit()
 
-    return {
-        "message": "Equipment deleted successfully"
-    }
+    return {"message": "Equipment deleted successfully"}
+
 
 # =========================
 # DASHBOARD
@@ -318,8 +288,8 @@ def dashboard_stats(
     ).count()
 
     return {
-        "total": total,
+        "total_equipment": total,
         "active": active,
-        "repair": repair,
-        "inactive": total - active
+        "under_repair": repair,
+        "inactive": total - active - repair
     }
